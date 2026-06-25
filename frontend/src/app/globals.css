@@ -1,0 +1,85 @@
+/* globals.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { 
+    box-sizing: border-box; 
+  }
+  
+  html { 
+    scroll-behavior: smooth; 
+  }
+  
+  ::-webkit-scrollbar { 
+    width: 6px; 
+    height: 6px; 
+  }
+  
+  ::-webkit-scrollbar-track { 
+    background: #F8F9FA; 
+  }
+  
+  ::-webkit-scrollbar-thumb { 
+    background: #DADCE0; 
+    border-radius: 3px; 
+  }
+}
+
+@layer components {
+  .timeline-track {
+    background: linear-gradient(to right, transparent, #DADCE0 2%, #DADCE0 98%, transparent);
+    height: 2px;
+  }
+
+  .cluster-bar {
+    transition: filter 0.15s ease, transform 0.15s ease;
+  }
+
+  .cluster-bar:hover {
+    filter: brightness(0.9);
+    transform: scaleY(1.05);
+  }
+
+  .source-pill-bbc { 
+    background: #EA4335; 
+    color: white; 
+  }
+  
+  .source-pill-npr { 
+    background: #4285F4; 
+    color: white; 
+  }
+  
+  .source-pill-reuters { 
+    background: #FBBC05; 
+    color: #202124; 
+  }
+  
+  .source-pill-default { 
+    background: #34A853; 
+    color: white; 
+  }
+
+  .glass {
+    background: rgba(255, 255, 255, 0.95);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    border: 1px solid #DADCE0;
+    box-shadow: 0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15);
+  }
+}
+
+/* Custom CSS variables */
+:root {
+  --color-background: #FFFFFF;
+  --color-surface: #F8F9FA;
+  --color-border: #DADCE0;
+  --color-text-primary: #202124;
+  --color-text-secondary: #5F6368;
+  --color-google-blue: #4285F4;
+  --color-google-red: #EA4335;
+  --color-google-yellow: #FBBC05;
+  --color-google-green: #34A853;
+}
