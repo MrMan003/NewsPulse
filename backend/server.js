@@ -8,14 +8,22 @@ const fs = require('fs');
 
 const app = express();
 
-// CORS configuration
-const corsOptions = {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-    methods: ['GET', 'POST'],
-    allowedHeaders: ['Content-Type'],
-    credentials: true
-};
-app.use(cors(corsOptions));
+// ============ UPDATED CORS CONFIGURATION ============
+// Allow all origins for now (quick fix for Vercel frontend)
+app.use(cors());
+
+// OR if you want to be more specific (recommended for production):
+// app.use(cors({
+//     origin: [
+//         'http://localhost:3000',
+//         'https://newspulse-omega.vercel.app',
+//         'https://newspulse.vercel.app'
+//     ],
+//     methods: ['GET', 'POST', 'OPTIONS'],
+//     allowedHeaders: ['Content-Type'],
+//     credentials: true
+// }));
+
 app.use(express.json());
 
 // Logging middleware
