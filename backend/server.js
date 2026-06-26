@@ -25,9 +25,12 @@ app.use((req, res, next) => {
     next();
 });
 
-// Configuration with environment variables - FIXED
-const dbPath = path.resolve(process.cwd(), process.env.DB_PATH || 'scraper/news_pulse.db');
-const scriptPath = path.resolve(process.cwd(), process.env.SCRIPT_PATH || 'scraper/pipeline.py');
+// ============ FIXED: Configuration with environment variables ============
+// Get the project root directory (where scraper folder is)
+const projectRoot = path.resolve(__dirname, '..'); // Go up one level from backend
+
+const dbPath = path.resolve(projectRoot, process.env.DB_PATH || 'scraper/news_pulse.db');
+const scriptPath = path.resolve(projectRoot, process.env.SCRIPT_PATH || 'scraper/pipeline.py');
 const pythonPath = process.env.PYTHON_PATH || 'python3';
 
 // Ensure database directory exists
@@ -35,6 +38,10 @@ const dbDir = path.dirname(dbPath);
 if (!fs.existsSync(dbDir)) {
     fs.mkdirSync(dbDir, { recursive: true });
 }
+
+console.log(`📁 Project Root: ${projectRoot}`);
+console.log(`📁 DB Path: ${dbPath}`);
+console.log(`📁 Script Path: ${scriptPath}`);
 
 function getDb() {
     try {
@@ -65,7 +72,7 @@ setInterval(() => {
     }
 }, 600000);
 
-// ===== ADD ROOT ENDPOINT =====
+// ===== ROOT ENDPOINT =====
 app.get('/', (req, res) => {
     res.json({
         message: 'NewsPulse API',
