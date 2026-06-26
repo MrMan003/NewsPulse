@@ -1,26 +1,21 @@
 name: Scrape News
 
+permissions:
+  contents: write
+
 on:
   schedule:
     - cron: '*/30 * * * *'
   workflow_dispatch:
 
-permissions:
-  contents: write
-  actions: read
-
 jobs:
   scrape:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v4
       
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       
@@ -34,67 +29,9 @@ jobs:
           cd scraper
           python pipeline.py
       
-      - name: Check for changes
-        id: check_changes
-        run: |
-          if git diff --quiet scraper/news_pulse.db; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-      
       - name: Commit and push if changed
-        if: steps.check_changes.outputs.changed == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add scraper/news_pulse.db
-          git commit -m "Auto-update news data - $(date +'%Y-%m-%d %H:%M:%S')"
-          git pushname: Scrape News
-
-on:
-  schedule:
-    - cron: '*/30 * * * *'  # Runs every 30 minutes
-  workflow_dispatch:        # Allows manual trigger from GitHub
-
-jobs:
-  scrape:
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      
-      - name: Install dependencies
-        run: |
-          cd scraper
-          pip install feedparser requests beautifulsoup4 scikit-learn numpy
-      
-      - name: Run scraper
-        run: |
-          cd scraper
-          python pipeline.py
-      
-      - name: Check for changes
-        id: check_changes
-        run: |
-          if git diff --quiet scraper/news_pulse.db; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-      
-      - name: Commit and push if changed
-        if: steps.check_changes.outputs.changed == 'true'
-        run: |
-          git config user.name "GitHub Action"
-          git config user.email "action@github.com"
-          git add scraper/news_pulse.db
-          git commit -m "Auto-update news data - $(date +'%Y-%m-%d %H:%M:%S')"
-          git push
-
+          git diff --staged --quiet || (git commit -m "Auto-update news data - $(date)" && git push)
