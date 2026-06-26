@@ -25,10 +25,10 @@ app.use((req, res, next) => {
     next();
 });
 
-// Configuration with environment variables
-const dbPath = path.resolve(__dirname, process.env.DB_PATH || '../scraper/news_pulse.db');
-const scriptPath = path.resolve(__dirname, process.env.SCRIPT_PATH || '../scraper/pipeline.py');
-const pythonPath = process.env.PYTHON_PATH || path.resolve(__dirname, '../.conda/bin/python');
+// Configuration with environment variables - FIXED
+const dbPath = path.resolve(process.cwd(), process.env.DB_PATH || 'scraper/news_pulse.db');
+const scriptPath = path.resolve(process.cwd(), process.env.SCRIPT_PATH || 'scraper/pipeline.py');
+const pythonPath = process.env.PYTHON_PATH || 'python3';
 
 // Ensure database directory exists
 const dbDir = path.dirname(dbPath);
@@ -64,6 +64,25 @@ setInterval(() => {
         console.log(`Cleaned up ${cleanedCount} old jobs`);
     }
 }, 600000);
+
+// ===== ADD ROOT ENDPOINT =====
+app.get('/', (req, res) => {
+    res.json({
+        message: 'NewsPulse API',
+        version: '1.0.0',
+        status: 'running',
+        endpoints: {
+            health: '/health',
+            clusters: '/clusters',
+            clusterDetail: '/clusters/:id',
+            timeline: '/timeline',
+            sources: '/sources',
+            stats: '/stats',
+            ingest: '/ingest/trigger (POST)',
+            jobStatus: '/ingest/status/:jobId'
+        }
+    });
+});
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -117,7 +136,6 @@ app.get('/clusters/:id', (req, res) => {
         const db = getDb();
         const clusterId = req.params.id;
         
-        // Validate cluster ID format
         if (!clusterId || clusterId.length < 8) {
             return res.status(400).json({ error: 'Invalid cluster ID format' });
         }
@@ -164,14 +182,12 @@ app.get('/timeline', (req, res) => {
         
         const params = [];
         
-        // Filter by source(s)
         if (source) {
             const sources = source.split(',').map(s => s.trim());
             query += ` AND a.source IN (${sources.map(() => '?').join(',')})`;
             params.push(...sources);
         }
         
-        // Filter by date range
         if (startDate) {
             query += ` AND a.published_at >= ?`;
             params.push(startDate);
@@ -239,15 +255,12 @@ app.get('/stats', (req, res) => {
             newestArticle: null
         };
         
-        // Total articles
         const articleCount = db.prepare('SELECT COUNT(*) as count FROM articles').get();
         stats.totalArticles = articleCount.count;
         
-        // Total clusters
         const clusterCount = db.prepare('SELECT COUNT(*) as count FROM clusters').get();
         stats.totalClusters = clusterCount.count;
         
-        // Date range
         const dateRange = db.prepare(`
             SELECT MIN(published_at) as oldest, MAX(published_at) as newest 
             FROM articles
@@ -267,18 +280,10 @@ app.get('/stats', (req, res) => {
 app.post('/ingest/trigger', (req, res) => {
     const jobId = randomUUID();
     
-    // Validate paths exist
     if (!fs.existsSync(scriptPath)) {
         return res.status(500).json({ 
             error: 'Pipeline script not found',
             path: scriptPath 
-        });
-    }
-    
-    if (!fs.existsSync(pythonPath)) {
-        return res.status(500).json({ 
-            error: 'Python interpreter not found',
-            path: pythonPath 
         });
     }
     
@@ -306,7 +311,6 @@ app.post('/ingest/trigger', (req, res) => {
         output += chunk;
         console.log(`[Job ${jobId}]`, chunk.trim());
         
-        // Update progress based on pipeline output
         if (chunk.includes('Fetching')) {
             jobs.set(jobId, { 
                 ...jobs.get(jobId), 
@@ -358,8 +362,8 @@ app.post('/ingest/trigger', (req, res) => {
             status: status,
             finishedAt: new Date().toISOString(),
             progress: status === 'completed' ? 100 : 0,
-            output: output.slice(-1000), // Keep last 1000 chars of output
-            error: errorOutput.slice(-1000), // Keep last 1000 chars of error output
+            output: output.slice(-1000),
+            error: errorOutput.slice(-1000),
             exitCode: code
         });
     });
@@ -374,7 +378,6 @@ app.post('/ingest/trigger', (req, res) => {
         });
     });
 
-    // Send immediate response
     res.status(202).json({ 
         jobId,
         message: 'Ingestion started',
@@ -382,14 +385,13 @@ app.post('/ingest/trigger', (req, res) => {
     });
 });
 
-// Get job status with more details
+// Get job status
 app.get('/ingest/status/:jobId', (req, res) => {
     const job = jobs.get(req.params.jobId);
     if (!job) {
         return res.status(404).json({ error: 'Job not found' });
     }
     
-    // Don't send full output to keep response size small
     const { output, error, ...safeJob } = job;
     res.json(safeJob);
 });
@@ -399,11 +401,15 @@ app.get('/jobs', (req, res) => {
     const jobList = Array.from(jobs.entries()).map(([id, job]) => ({
         id,
         ...job,
-        // Don't send full output in the list view
         output: job.output ? 'Available' : undefined,
         error: job.error ? 'Available' : undefined
     }));
     res.json(jobList);
+});
+
+// 404 handler - MUST BE AFTER ALL ROUTES
+app.use((req, res) => {
+    res.status(404).json({ error: 'Endpoint not found' });
 });
 
 // Error handling middleware
@@ -415,14 +421,9 @@ app.use((err, req, res, next) => {
     });
 });
 
-// 404 handler
-app.use((req, res) => {
-    res.status(404).json({ error: 'Endpoint not found' });
-});
-
 const PORT = process.env.PORT || 3001;
 
-// Validate required environment variables on startup
+// Validate environment variables
 const requiredEnvVars = ['DB_PATH'];
 const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
 if (missingVars.length > 0) {
@@ -433,7 +434,6 @@ if (missingVars.length > 0) {
 // Graceful shutdown
 process.on('SIGTERM', () => {
     console.log('SIGTERM received, shutting down gracefully...');
-    // Close any open database connections
     process.exit(0);
 });
 
@@ -454,4 +454,4 @@ const server = app.listen(PORT, () => {
     console.log(`   Script: ${scriptPath}`);
 });
 
-module.exports = app; // For testing
+module.exports = app;
