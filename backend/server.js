@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const Database = require('better-sqlite3');
+const sqlite3 = require('sqlite3').verbose();
 const { spawn } = require('child_process');
 const path = require('path');
 const { randomUUID } = require('crypto');
@@ -8,7 +8,7 @@ const fs = require('fs');
 
 const app = express();
 
-// Enhanced CORS configuration
+// CORS configuration
 const corsOptions = {
     origin: process.env.FRONTEND_URL || 'http://localhost:3000',
     methods: ['GET', 'POST'],
@@ -25,10 +25,8 @@ app.use((req, res, next) => {
     next();
 });
 
-// ============ FIXED: Configuration with environment variables ============
-// Get the project root directory (where scraper folder is)
-const projectRoot = path.resolve(__dirname, '..'); // Go up one level from backend
-
+// Configuration
+const projectRoot = path.resolve(__dirname, '..');
 const dbPath = path.resolve(projectRoot, process.env.DB_PATH || 'scraper/news_pulse.db');
 const scriptPath = path.resolve(projectRoot, process.env.SCRIPT_PATH || 'scraper/pipeline.py');
 const pythonPath = process.env.PYTHON_PATH || 'python3';
@@ -41,32 +39,58 @@ if (!fs.existsSync(dbDir)) {
 
 console.log(`📁 Project Root: ${projectRoot}`);
 console.log(`📁 DB Path: ${dbPath}`);
-console.log(`📁 Script Path: ${scriptPath}`);
 
 function getDb() {
-    try {
-        return new Database(dbPath, { readonly: false });
-    } catch (err) {
-        console.error('Database connection error:', err);
-        throw new Error('Failed to connect to database');
-    }
+    return new Promise((resolve, reject) => {
+        const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
+            if (err) {
+                console.error('Database connection error:', err);
+                reject(err);
+            } else {
+                resolve(db);
+            }
+        });
+    });
+}
+
+// Helper function to run queries
+function runQuery(db, query, params = []) {
+    return new Promise((resolve, reject) => {
+        db.all(query, params, (err, rows) => {
+            if (err) {
+                reject(err);
+            } else {
+                resolve(rows);
+            }
+        });
+    });
+}
+
+function runExec(db, query) {
+    return new Promise((resolve, reject) => {
+        db.exec(query, (err) => {
+            if (err) {
+                reject(err);
+            } else {
+                resolve();
+            }
+        });
+    });
 }
 
 const jobs = new Map();
 
-// Clean up old jobs periodically (every 10 minutes)
+// Clean up old jobs
 setInterval(() => {
     const now = Date.now();
-    const MAX_JOB_AGE = 3600000; // 1 hour
+    const MAX_JOB_AGE = 3600000;
     let cleanedCount = 0;
-    
     for (const [id, job] of jobs) {
         if (job.finishedAt && (now - new Date(job.finishedAt).getTime() > MAX_JOB_AGE)) {
             jobs.delete(id);
             cleanedCount++;
         }
     }
-    
     if (cleanedCount > 0) {
         console.log(`Cleaned up ${cleanedCount} old jobs`);
     }
@@ -91,8 +115,8 @@ app.get('/', (req, res) => {
     });
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
+// Health check
+app.get('/health', async (req, res) => {
     const health = {
         status: 'healthy',
         timestamp: new Date().toISOString(),
@@ -102,8 +126,8 @@ app.get('/health', (req, res) => {
     };
     
     try {
-        const db = getDb();
-        db.prepare('SELECT 1').get();
+        const db = await getDb();
+        await runQuery(db, 'SELECT 1');
         db.close();
         health.db = 'connected';
         res.json(health);
@@ -115,11 +139,11 @@ app.get('/health', (req, res) => {
     }
 });
 
-// Get all clusters with enhanced information
-app.get('/clusters', (req, res) => {
+// Get all clusters
+app.get('/clusters', async (req, res) => {
     try {
-        const db = getDb();
-        const rows = db.prepare(`
+        const db = await getDb();
+        const rows = await runQuery(db, `
             SELECT c.id, c.label, COUNT(a.id) as articleCount, 
                    MIN(a.published_at) as earliestArticle, 
                    MAX(a.published_at) as latestArticle,
@@ -128,7 +152,7 @@ app.get('/clusters', (req, res) => {
             JOIN articles a ON c.id = a.cluster_id
             GROUP BY c.id
             ORDER BY latestArticle DESC
-        `).all();
+        `);
         db.close();
         res.json(rows);
     } catch (err) {
@@ -137,22 +161,23 @@ app.get('/clusters', (req, res) => {
     }
 });
 
-// Get specific cluster details
-app.get('/clusters/:id', (req, res) => {
+// Get specific cluster
+app.get('/clusters/:id', async (req, res) => {
     try {
-        const db = getDb();
+        const db = await getDb();
         const clusterId = req.params.id;
         
         if (!clusterId || clusterId.length < 8) {
+            db.close();
             return res.status(400).json({ error: 'Invalid cluster ID format' });
         }
         
-        const rows = db.prepare(`
+        const rows = await runQuery(db, `
             SELECT title, url, summary, body, published_at, source, fetched_at
             FROM articles 
             WHERE cluster_id = ? 
             ORDER BY published_at ASC
-        `).all(clusterId);
+        `, [clusterId]);
         
         db.close();
         
@@ -171,11 +196,11 @@ app.get('/clusters/:id', (req, res) => {
     }
 });
 
-// Get timeline data with source filtering
-app.get('/timeline', (req, res) => {
+// Get timeline
+app.get('/timeline', async (req, res) => {
     try {
-        const db = getDb();
-        const { source, startDate, endDate } = req.query;
+        const db = await getDb();
+        const { source } = req.query;
         
         let query = `
             SELECT c.id, c.label, COUNT(a.id) as articleCount, 
@@ -195,18 +220,9 @@ app.get('/timeline', (req, res) => {
             params.push(...sources);
         }
         
-        if (startDate) {
-            query += ` AND a.published_at >= ?`;
-            params.push(startDate);
-        }
-        if (endDate) {
-            query += ` AND a.published_at <= ?`;
-            params.push(endDate);
-        }
-        
         query += ` GROUP BY c.id`;
         
-        const rows = db.prepare(query).all(...params);
+        const rows = await runQuery(db, query, params);
         db.close();
         
         if (rows.length === 0) {
@@ -232,16 +248,16 @@ app.get('/timeline', (req, res) => {
     }
 });
 
-// Get distinct sources
-app.get('/sources', (req, res) => {
+// Get sources
+app.get('/sources', async (req, res) => {
     try {
-        const db = getDb();
-        const rows = db.prepare(`
+        const db = await getDb();
+        const rows = await runQuery(db, `
             SELECT DISTINCT source, COUNT(*) as articleCount 
             FROM articles 
             GROUP BY source 
             ORDER BY source
-        `).all();
+        `);
         db.close();
         res.json(rows.map(r => r.source));
     } catch (err) {
@@ -250,40 +266,33 @@ app.get('/sources', (req, res) => {
     }
 });
 
-// Get statistics
-app.get('/stats', (req, res) => {
+// Get stats
+app.get('/stats', async (req, res) => {
     try {
-        const db = getDb();
-        const stats = {
-            totalArticles: 0,
-            totalClusters: 0,
-            sources: [],
-            oldestArticle: null,
-            newestArticle: null
-        };
+        const db = await getDb();
         
-        const articleCount = db.prepare('SELECT COUNT(*) as count FROM articles').get();
-        stats.totalArticles = articleCount.count;
-        
-        const clusterCount = db.prepare('SELECT COUNT(*) as count FROM clusters').get();
-        stats.totalClusters = clusterCount.count;
-        
-        const dateRange = db.prepare(`
+        const articleCount = await runQuery(db, 'SELECT COUNT(*) as count FROM articles');
+        const clusterCount = await runQuery(db, 'SELECT COUNT(*) as count FROM clusters');
+        const dateRange = await runQuery(db, `
             SELECT MIN(published_at) as oldest, MAX(published_at) as newest 
             FROM articles
-        `).get();
-        stats.oldestArticle = dateRange.oldest;
-        stats.newestArticle = dateRange.newest;
+        `);
         
         db.close();
-        res.json(stats);
+        
+        res.json({
+            totalArticles: articleCount[0]?.count || 0,
+            totalClusters: clusterCount[0]?.count || 0,
+            oldestArticle: dateRange[0]?.oldest || null,
+            newestArticle: dateRange[0]?.newest || null
+        });
     } catch (err) {
         console.error('Error fetching stats:', err);
         res.status(500).json({ error: 'Failed to fetch statistics' });
     }
 });
 
-// Trigger ingestion with improved error handling
+// Trigger ingestion
 app.post('/ingest/trigger', (req, res) => {
     const jobId = randomUUID();
     
@@ -319,35 +328,15 @@ app.post('/ingest/trigger', (req, res) => {
         console.log(`[Job ${jobId}]`, chunk.trim());
         
         if (chunk.includes('Fetching')) {
-            jobs.set(jobId, { 
-                ...jobs.get(jobId), 
-                progress: 20,
-                message: 'Fetching articles...'
-            });
+            jobs.set(jobId, { ...jobs.get(jobId), progress: 20, message: 'Fetching articles...' });
         } else if (chunk.includes('Extracting body')) {
-            jobs.set(jobId, { 
-                ...jobs.get(jobId), 
-                progress: 40,
-                message: 'Extracting article content...'
-            });
+            jobs.set(jobId, { ...jobs.get(jobId), progress: 40, message: 'Extracting article content...' });
         } else if (chunk.includes('Running clustering')) {
-            jobs.set(jobId, { 
-                ...jobs.get(jobId), 
-                progress: 60,
-                message: 'Clustering articles...'
-            });
+            jobs.set(jobId, { ...jobs.get(jobId), progress: 60, message: 'Clustering articles...' });
         } else if (chunk.includes('Grouped data into')) {
-            jobs.set(jobId, { 
-                ...jobs.get(jobId), 
-                progress: 80,
-                message: 'Saving clusters...'
-            });
+            jobs.set(jobId, { ...jobs.get(jobId), progress: 80, message: 'Saving clusters...' });
         } else if (chunk.includes('Pipeline Run Complete')) {
-            jobs.set(jobId, { 
-                ...jobs.get(jobId), 
-                progress: 95,
-                message: 'Finalizing...'
-            });
+            jobs.set(jobId, { ...jobs.get(jobId), progress: 95, message: 'Finalizing...' });
         }
     });
 
@@ -398,12 +387,11 @@ app.get('/ingest/status/:jobId', (req, res) => {
     if (!job) {
         return res.status(404).json({ error: 'Job not found' });
     }
-    
     const { output, error, ...safeJob } = job;
     res.json(safeJob);
 });
 
-// Get all jobs (for debugging)
+// Get all jobs
 app.get('/jobs', (req, res) => {
     const jobList = Array.from(jobs.entries()).map(([id, job]) => ({
         id,
@@ -414,12 +402,12 @@ app.get('/jobs', (req, res) => {
     res.json(jobList);
 });
 
-// 404 handler - MUST BE AFTER ALL ROUTES
+// 404 handler
 app.use((req, res) => {
     res.status(404).json({ error: 'Endpoint not found' });
 });
 
-// Error handling middleware
+// Error handling
 app.use((err, req, res, next) => {
     console.error('Unhandled error:', err);
     res.status(500).json({ 
@@ -430,15 +418,6 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 3001;
 
-// Validate environment variables
-const requiredEnvVars = ['DB_PATH'];
-const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
-if (missingVars.length > 0) {
-    console.warn('⚠️  Missing environment variables:', missingVars.join(', '));
-    console.warn('Using default values where available');
-}
-
-// Graceful shutdown
 process.on('SIGTERM', () => {
     console.log('SIGTERM received, shutting down gracefully...');
     process.exit(0);
